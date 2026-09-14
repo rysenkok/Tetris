@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Тетрис — Улучшенная версия</title>
+<style>
+*{box-sizing:border-box} body{margin:0;background:linear-gradient(160deg,#101025,#28286b);font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#fff;display:flex;justify-content:center;min-height:100vh}
+.game{width:min(96vw,430px);padding:12px 10px 24px;text-align:center} h1{margin:2px 0 7px;font-size:31px;text-shadow:0 3px 10px #0008}
+.top{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;max-width:330px;margin:auto auto 8px;font-size:13px}.stat{background:#ffffff15;border-radius:10px;padding:6px}.stat b{display:block;font-size:17px}
+canvas{display:block;margin:auto;background:#080811;border:4px solid #7777ff;border-radius:12px;width:min(82vw,300px);height:auto;box-shadow:0 8px 30px #0008}
+.controls{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:330px;margin:10px auto 0}
+button,select{border:0;border-radius:13px;background:#ffffff1b;color:#fff;font-size:22px;font-weight:800;padding:11px 7px;box-shadow:0 4px 0 #0004;touch-action:manipulation}
+button:active{transform:translateY(2px);box-shadow:0 2px 0 #0004}
+.start{grid-column:1/-1;background:#5b5bf7;font-size:18px}.pause{background:#9b59ff;font-size:18px}
+select{font-size:16px;width:100%;margin-top:8px;background:#22224a}.hint{font-size:12px;opacity:.65;margin-top:9px}
+</style>
+</head>
+<body>
+<div class="game">
+<h1>🧱 ТЕТРИС</h1>
+<div class="top">
+ <div class="stat">Очки<b id="score">0</b></div>
+ <div class="stat">Рекорд<b id="best">0</b></div>
+ <div class="stat">Уровень<b id="level">1</b></div>
+</div>
+<canvas id="board" width="300" height="600"></canvas>
+<select id="difficulty">
+ <option value="easy">🟢 Легко</option>
+ <option value="normal" selected>🟡 Нормально</option>
+ <option value="hard">🔴 Сложно</option>
+</select>
+<div class="controls">
+ <button class="start" id="start">▶️ Начать</button>
+ <button id="left">⬅️</button><button id="rotate">🔄</button><button id="right">➡️</button>
+ <button id="down">⬇️</button><button class="pause" id="pause">⏸️ Пауза</button><button id="music">🎵</button>
+</div>
+<div class="hint">↑ поворот · ← → движение · ↓ быстрее · пробел — бросить</div>
+</div>
+
+<script>
+const canvas=document.getElementById('board'),ctx=canvas.getContext('2d');
+const W=10,H=20,S=30;
+const colors={I:'#35d7ff',O:'#ffd735',T:'#b45cff',J:'#4c7dff',L:'#ff9b3d',S:'#4ee36b',Z:'#ff4d6d'};
+const SHAPES={
+ I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+ O:[[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
+ T:[[0,1,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]],
+ J:[[1,0,0,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]],
+ L:[[0,0,1,0],[1,1,1,0],[0,0,0,0],[0,0,0,0]],
+ S:[[0,1,1,0],[1,1,0,0],[0,0,0,0],[0,0,0,0]],
+ Z:[[1,1,0,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]]
+};
+const TYPES=Object.keys(SHAPES);
+let board=newBoard(),player=null,score=0,level=1,running=false,paused=false,last=0,raf=0,dropInterval=700;
+let particles=[],flashRows=[],musicOn=false,audio=null,melodyTimer=null;
+let best=Number(localStorage.getItem('tetrisBest')||0); document.getElementById('best').textContent=best;
+
+function newBoard(){return Array.from({length:H},()=>Array(W).fill(null))}
+function clone(m){return m.map(r=>r.slice())}
+function rotateCW(m){let o=Array.from({length:4},()=>Array(4).fill(0));for(let y=0;y<4;y++)for(let x=0;x<4;x++)o[x][3-y]=m[y][x];return o}
+function collides(p){
+ for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(p.matrix[y][x]){
+  let bx=p.x+x,by=p.y+y;if(bx<0||bx>=W||by>=H)return true;if(by>=0&&board[by][bx])return true;
+ }return false;
+}
+function spawn(){
+ const type=TYPES[Math.floor(Math.random()*TYPES.length)];
+ player={type,matrix:clone(SHAPES[type]),x:3,y:0};
+ if(collides(player)) gameOver();
+}
+function merge(){for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(player.matrix[y][x]&&player.y+y>=0)board[player.y+y][player.x+x]=player.type}
+function clearLines(){
+ let rows=[];
+ for(let y=H-1;y>=0;y--)if(board[y].every(Boolean))rows.push(y);
+ if(!rows.length)return;
+ flashRows=rows.slice();
+ rows.forEach(y=>{for(let x=0;x<W;x++)spawnParticle(x*S+15,y*S+15,colors[board[y][x]]);});
+ setTimeout(()=>{for(const y of rows)board.splice(y,1);while(board.length<H)board.unshift(Array(W).fill(null));flashRows=[];},120);
+ const pts=[0,100,300,500,800][rows.length]||1000;
+ score+=pts*level; level=Math.floor(score/1000)+1;
+ dropInterval=Math.max(90,baseSpeed()-(level-1)*35);
+ updateStats(); beep(180,0.12,'triangle');
+}
+function baseSpeed(){let d=document.getElementById('difficulty').value;return d==='easy'?900:d==='hard'?430:650}
+function updateStats(){document.getElementById('score').textContent=score;document.getElementById('level').textContent=level;if(score>best){best=score;localStorage.setItem('tetrisBest',best);document.getElementById('best').textContent=best}}
+function move(dx){if(!running||paused)return;player.x+=dx;if(collides(player))player.x-=dx;draw()}
+function softDrop(){if(!running||paused)return;player.y++;if(collides(player)){player.y--;merge();clearLines();spawn()}draw()}
+function hardDrop(){if(!running||paused)return;while(!collides(player))player.y++;player.y--;merge();clearLines();spawn();draw();beep(90,.06,'square')}
+function rotate(){
+ if(!running||paused||player.type==='O')return;
+ let old=player.matrix,rx=rotateCW(old);player.matrix=rx;
+ for(const k of [0,-1,1,-2,2]){player.x+=k;if(!collides(player)){draw();return}player.x-=k}
+ player.matrix=old;draw();
+}
+function gameOver(){running=false;paused=false;stopMusic();beep(70,.35,'sawtooth');document.getElementById('start').textContent='🔄 Ещё раз';draw()}
+function startGame(){
+ board=newBoard();particles=[];flashRows=[];score=0;level=1;dropInterval=baseSpeed();running=true;paused=false;
+ document.getElementById('start').textContent='🔄 Заново';document.getElementById('pause').textContent='⏸️ Пауза';
+ spawn();last=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(loop);updateStats();draw();if(musicOn)startMusic();
+}
+function togglePause(){if(!running)return;paused=!paused;document.getElementById('pause').textContent=paused?'▶️ Продолжить':'⏸️ Пауза';if(!paused){last=performance.now();raf=requestAnimationFrame(loop)}draw()}
+function loop(t){if(!running||paused)return;if(t-last>dropInterval){softDrop();last=t}raf=requestAnimationFrame(loop)}
+
+function spawnParticle(x,y,c){for(let i=0;i<8;i++)particles.push({x,y,vx:(Math.random()-.5)*5,vy:(Math.random()-.8)*5,a:1,c})}
+function draw(){
+ ctx.clearRect(0,0,300,600);
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++)cell(x,y,board[y][x]);
+ if(player)for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(player.matrix[y][x])cell(player.x+x,player.y+y,player.type);
+ if(flashRows.length){ctx.fillStyle='#fff';ctx.globalAlpha=.65;flashRows.forEach(y=>ctx.fillRect(0,y*S,300,S));ctx.globalAlpha=1}
+ particles=particles.filter(p=>p.a>0);
+ for(const p of particles){ctx.globalAlpha=p.a;ctx.fillStyle=p.c;ctx.fillRect(p.x,p.y,5,5);p.x+=p.vx;p.y+=p.vy;p.vy+=.18;p.a-=.025}ctx.globalAlpha=1;
+ if(paused){ctx.fillStyle='#0009';ctx.fillRect(0,0,300,600);ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';ctx.fillText('ПАУЗА',150,290);ctx.font='18px Arial';ctx.fillText('Нажми ▶️ чтобы продолжить',150,325)}
+}
+function cell(x,y,type){if(x<0||x>=W||y<0||y>=H)return;let px=x*S,py=y*S;ctx.fillStyle=type?colors[type]:'#10101d';ctx.fillRect(px+1,py+1,S-2,S-2);ctx.strokeStyle='#ffffff22';ctx.strokeRect(px+1,py+1,S-2,S-2);if(type){ctx.fillStyle='#ffffff44';ctx.fillRect(px+4,py+4,S-9,4)}}
+
+function beep(freq,dur,wave='sine'){try{audio=audio||new(window.AudioContext||window.webkitAudioContext)();let o=audio.createOscillator(),g=audio.createGain();o.type=wave;o.frequency.value=freq;g.gain.setValueAtTime(.045,audio.currentTime);g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+dur);o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+dur)}catch(e){}}
+function startMusic(){
+ stopMusic();let notes=[262,330,392,523,392,330,294,349,440,587,440,349],i=0;
+ melodyTimer=setInterval(()=>{if(running&&!paused){beep(notes[i%notes.length],.16,'sine');i++}},260)
+}
+function stopMusic(){if(melodyTimer){clearInterval(melodyTimer);melodyTimer=null}}
+function toggleMusic(){musicOn=!musicOn;document.getElementById('music').textContent=musicOn?'🔊':'🎵';if(musicOn&&running)startMusic();else stopMusic()}
+
+document.getElementById('start').onclick=startGame;document.getElementById('pause').onclick=togglePause;document.getElementById('music').onclick=toggleMusic;
+document.getElementById('left').onclick=()=>move(-1);document.getElementById('right').onclick=()=>move(1);document.getElementById('down').onclick=softDrop;document.getElementById('rotate').onclick=rotate;
+document.getElementById('difficulty').onchange=()=>{if(running){dropInterval=baseSpeed()-(level-1)*35}};
+document.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowDown','ArrowUp',' '].includes(e.key))e.preventDefault();if(e.key==='ArrowLeft')move(-1);if(e.key==='ArrowRight')move(1);if(e.key==='ArrowDown')softDrop();if(e.key==='ArrowUp')rotate();if(e.key===' ')hardDrop();if(e.key.toLowerCase()==='p')togglePause()});
+draw();
+</script>
+</body></html>
